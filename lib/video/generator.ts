@@ -103,7 +103,7 @@ export async function generateVideo(options: GenerateVideoOptions): Promise<Blob
     ...outputArgs,
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
-    '-t', '15',
+    '-t', '8',
     '-y',
     'output.mp4',
   ]);
