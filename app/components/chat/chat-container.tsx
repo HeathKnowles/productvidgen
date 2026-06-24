@@ -1,282 +1,217 @@
 'use client';
 
-import { useReducer, useCallback, useState } from 'react';
-import type { Message, ChatState, ChatAction, ProductData, Intent, AssetSelection } from '@/lib/types';
-import { MessageList } from './message-list';
-import { MessageInput } from './message-input';
-import { AssetSelector } from './asset-selector';
-import { VideoGenerator } from './video-generator';
+import { useState, useRef, useEffect, useCallback } from 'react';
 
-const initialState: ChatState = {
-  messages: [],
-  isLoading: false,
-  currentPhase: 'gathering',
-  productData: null,
-  assets: {},
-  videoJob: null,
-};
-
-function chatReducer(state: ChatState, action: ChatAction): ChatState {
-  switch (action.type) {
-    case 'ADD_MESSAGE':
-      return { ...state, messages: [...state.messages, action.message] };
-    case 'UPDATE_MESSAGE':
-      return {
-        ...state,
-        messages: state.messages.map((m) =>
-          m.id === action.id ? { ...m, content: m.content + action.content } : m
-        ),
-      };
-    case 'SET_LOADING':
-      return { ...state, isLoading: action.isLoading };
-    case 'SET_PHASE':
-      return { ...state, currentPhase: action.phase };
-    case 'SET_PRODUCT_DATA':
-      return { ...state, productData: action.data };
-    case 'SET_ASSET':
-      return { ...state, assets: { ...state.assets, [action.key]: action.asset } };
-    case 'SET_VIDEO_JOB':
-      return { ...state, videoJob: action.job };
-    case 'UPDATE_VIDEO_JOB':
-      return {
-        ...state,
-        videoJob: state.videoJob ? { ...state.videoJob, ...action.updates } : null,
-      };
-    default:
-      return state;
-  }
+interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  videoUrl?: string;
+  status?: string;
+  progress?: number;
 }
 
 function generateId() {
-  return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 export function ChatContainer() {
-  const [state, dispatch] = useReducer(chatReducer, initialState);
-  const [showAssetSelector, setShowAssetSelector] = useState(false);
-  const [showVideoGenerator, setShowVideoGenerator] = useState(false);
-  const [searchTerms, setSearchTerms] = useState({ video: ['lifestyle product'], gif: ['excited'] });
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const handleSend = useCallback(
-    async (content: string) => {
-      const userMessage: Message = {
-        id: generateId(),
-        role: 'user',
-        content,
-        timestamp: Date.now(),
-      };
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-      dispatch({ type: 'ADD_MESSAGE', message: userMessage });
-      dispatch({ type: 'SET_LOADING', isLoading: true });
+  const updateMessage = useCallback((id: string, updates: Partial<Message>) => {
+    setMessages(prev => prev.map(m =>
+      m.id === id ? { ...m, ...updates } : m
+    ));
+  }, []);
 
-      const assistantId = generateId();
-      dispatch({
-        type: 'ADD_MESSAGE',
-        message: {
-          id: assistantId,
-          role: 'assistant',
-          content: '',
-          timestamp: Date.now(),
-        },
-      });
+  const appendToMessage = useCallback((id: string, text: string) => {
+    setMessages(prev => prev.map(m =>
+      m.id === id ? { ...m, content: m.content + text } : m
+    ));
+  }, []);
 
-      try {
-        const chatMessages = [...state.messages, userMessage].map((m) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-        }));
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const text = input.trim();
+    if (!text || isLoading) return;
 
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: chatMessages,
-            context: {
-              phase: state.currentPhase,
-              productData: state.productData,
-              assets: state.assets,
-            },
-          }),
-        });
+    setInput('');
+    setIsLoading(true);
 
-        if (!response.ok) throw new Error('Chat request failed');
+    const userMsg: Message = { id: generateId(), role: 'user', content: text };
+    const assistantId = generateId();
+    const assistantMsg: Message = { id: assistantId, role: 'assistant', content: '', status: 'Thinking...' };
 
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('No response body');
+    setMessages(prev => [...prev, userMsg, assistantMsg]);
 
-        const decoder = new TextDecoder();
-        let intentHandled = false;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              if (data === '[DONE]') continue;
-
-              try {
-                const parsed = JSON.parse(data);
-
-                if (parsed.type === 'intent' && !intentHandled) {
-                  intentHandled = true;
-                  const intent = parsed.data.intent as Intent;
-                  const url = parsed.data.url as string | null;
-
-                  if (intent === 'provide_url' && url) {
-                    handleUrlProvided(url);
-                  } else if (intent === 'select_assets' && state.productData) {
-                    setShowAssetSelector(true);
-                  } else if (intent === 'generate_video' && state.productData && state.assets.backgroundVideo) {
-                    setShowVideoGenerator(true);
-                    dispatch({ type: 'SET_PHASE', phase: 'generating' });
-                  }
-                } else if (parsed.type === 'content') {
-                  dispatch({ type: 'UPDATE_MESSAGE', id: assistantId, content: parsed.data });
-                }
-              } catch {
-                // Skip malformed JSON
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Chat error:', error);
-        dispatch({
-          type: 'UPDATE_MESSAGE',
-          id: assistantId,
-          content: 'Sorry, something went wrong. Please try again.',
-        });
-      } finally {
-        dispatch({ type: 'SET_LOADING', isLoading: false });
-      }
-    },
-    [state.messages, state.currentPhase, state.productData, state.assets]
-  );
-
-  const handleUrlProvided = async (url: string) => {
     try {
-      const response = await fetch('/api/scrape', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({
+          message: text,
+          history: messages.map(m => ({ role: m.role, content: m.content })),
+        }),
       });
 
-      if (response.ok) {
-        const { productData } = await response.json();
-        if (productData) {
-          dispatch({ type: 'SET_PRODUCT_DATA', data: productData as ProductData });
-          dispatch({ type: 'SET_PHASE', phase: 'assets' });
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response');
 
-          setTimeout(() => {
-            setShowAssetSelector(true);
-          }, 1500);
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        for (const line of decoder.decode(value).split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+
+            if (parsed.type === 'text') {
+              appendToMessage(assistantId, parsed.content);
+              updateMessage(assistantId, { status: undefined });
+            } else if (parsed.type === 'status') {
+              updateMessage(assistantId, { status: parsed.stage });
+            } else if (parsed.type === 'progress') {
+              updateMessage(assistantId, { progress: parsed.percent });
+            } else if (parsed.type === 'video') {
+              updateMessage(assistantId, { videoUrl: parsed.url, status: undefined, progress: undefined });
+            }
+          } catch {}
         }
       }
+
+      updateMessage(assistantId, { status: undefined, progress: undefined });
     } catch (error) {
-      console.error('Scrape error:', error);
+      console.error('Chat error:', error);
+      updateMessage(assistantId, { content: 'Something went wrong. Please try again!', status: undefined });
+    } finally {
+      setIsLoading(false);
     }
-  };
-
-  const handleAssetsSelected = (assets: AssetSelection) => {
-    if (assets.backgroundVideo) {
-      dispatch({ type: 'SET_ASSET', key: 'backgroundVideo', asset: assets.backgroundVideo });
-    }
-    if (assets.gif) {
-      dispatch({ type: 'SET_ASSET', key: 'gif', asset: assets.gif });
-    }
-    if (assets.audio) {
-      dispatch({ type: 'SET_ASSET', key: 'audio', asset: assets.audio });
-    }
-
-    setShowAssetSelector(false);
-    setShowVideoGenerator(true);
-    dispatch({ type: 'SET_PHASE', phase: 'generating' });
-
-    dispatch({
-      type: 'ADD_MESSAGE',
-      message: {
-        id: generateId(),
-        role: 'assistant',
-        content: 'Great choices! Starting video generation now...',
-        timestamp: Date.now(),
-      },
-    });
-  };
-
-  const handleVideoComplete = (videoUrl: string) => {
-    dispatch({ type: 'SET_PHASE', phase: 'complete' });
-    dispatch({
-      type: 'ADD_MESSAGE',
-      message: {
-        id: generateId(),
-        role: 'assistant',
-        content: 'Your video is ready! You can preview and download it above.',
-        timestamp: Date.now(),
-      },
-    });
   };
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-zinc-950">
-      <header className="border-b border-zinc-200 dark:border-zinc-800 px-4 py-3">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-            UGC Video Generator
-          </h1>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500 dark:text-zinc-400 capitalize">
-              {state.currentPhase}
-            </span>
-            {state.productData && (
-              <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-0.5 rounded-full">
-                {state.productData.name}
-              </span>
-            )}
-          </div>
+    <div className="flex flex-col h-screen bg-white dark:bg-zinc-950">
+      {/* Header */}
+      <header className="border-b border-zinc-200 dark:border-zinc-800 px-4 py-4">
+        <div className="max-w-2xl mx-auto">
+          <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">UGC Video Generator</h1>
+          <p className="text-sm text-zinc-500 mt-0.5">Drop a product URL, get a viral video</p>
         </div>
       </header>
 
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto">
-          <MessageList messages={state.messages} isLoading={state.isLoading} />
-
-          {showAssetSelector && state.productData && (
-            <div className="p-4">
-              <AssetSelector
-                searchTerms={searchTerms}
-                onComplete={handleAssetsSelected}
-              />
+        {messages.length === 0 ? (
+          <div className="h-full flex items-center justify-center p-8">
+            <div className="text-center max-w-md">
+              <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-violet-500 to-pink-500 flex items-center justify-center">
+                <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <h2 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Create UGC Videos</h2>
+              <p className="text-zinc-500 dark:text-zinc-400 mb-6">
+                Share your product URL and I'll create a short-form marketing video with trending audio and GIFs.
+              </p>
+              <div className="text-sm text-zinc-400 dark:text-zinc-500 italic">
+                "I'm building CalAI, a calorie tracking app. Here's the site: calai.app"
+              </div>
             </div>
-          )}
+          </div>
+        ) : (
+          <div className="max-w-2xl mx-auto py-6 space-y-6">
+            {messages.map(msg => (
+              <div key={msg.id} className="px-4">
+                <div className="flex gap-3">
+                  <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-sm font-medium ${
+                    msg.role === 'user'
+                      ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
+                      : 'bg-gradient-to-br from-violet-500 to-pink-500 text-white'
+                  }`}>
+                    {msg.role === 'user' ? 'U' : 'AI'}
+                  </div>
 
-          {showVideoGenerator && state.productData && state.assets.backgroundVideo && (
-            <div className="p-4">
-              <VideoGenerator
-                productData={state.productData}
-                assets={state.assets}
-                onComplete={handleVideoComplete}
-              />
-            </div>
-          )}
-        </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-zinc-800 dark:text-zinc-200 whitespace-pre-wrap leading-relaxed">
+                      {msg.content}
+                    </p>
+
+                    {msg.status && (
+                      <div className="mt-3 flex items-center gap-2 text-sm text-violet-600 dark:text-violet-400">
+                        <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        <span>{msg.status}</span>
+                        {msg.progress !== undefined && <span>({msg.progress}%)</span>}
+                      </div>
+                    )}
+
+                    {msg.videoUrl && (
+                      <div className="mt-4 rounded-xl overflow-hidden bg-black inline-block max-w-xs">
+                        <video
+                          src={msg.videoUrl}
+                          controls
+                          playsInline
+                          className="w-full aspect-[9/16]"
+                        />
+                        <a
+                          href={msg.videoUrl}
+                          download="ugc-video.mp4"
+                          className="block text-center py-2.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium transition-colors"
+                        >
+                          Download Video
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
       </div>
 
-      <MessageInput
-        onSend={handleSend}
-        disabled={state.isLoading || showAssetSelector || showVideoGenerator}
-        placeholder={
-          state.currentPhase === 'gathering'
-            ? 'Describe your product or paste a URL...'
-            : state.currentPhase === 'assets'
-            ? 'Select assets above or describe what you want...'
-            : 'Your video is being generated...'
-        }
-      />
+      {/* Input */}
+      <div className="border-t border-zinc-200 dark:border-zinc-800 p-4">
+        <form onSubmit={handleSubmit} className="max-w-2xl mx-auto">
+          <div className="relative">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSubmit())}
+              placeholder="Describe your product or paste a URL..."
+              disabled={isLoading}
+              rows={1}
+              className="w-full resize-none rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 pl-4 pr-12 py-3 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-50 transition-all"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              className="absolute right-2 bottom-2 p-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+              </svg>
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

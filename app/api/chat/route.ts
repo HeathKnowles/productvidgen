@@ -1,89 +1,88 @@
-import { streamChat, detectIntent } from '@/lib/ai';
-import { CHAT_SYSTEM_PROMPT, INTENT_DETECTION_PROMPT } from '@/lib/prompts/intent';
-import type { ProductData, AssetSelection, ChatPhase, Intent } from '@/lib/types';
+import { chat, streamChat } from '@/lib/ai';
+import { parseMessage, runPipeline } from '@/lib/pipeline';
+import { renderVideo } from '@/lib/video/render';
 
-interface ChatRequest {
-  messages: { role: 'user' | 'assistant'; content: string }[];
-  context: {
-    phase: ChatPhase;
-    productData: ProductData | null;
-    assets: AssetSelection;
-  };
-}
+const SYSTEM_PROMPT = `You are a friendly UGC video assistant. You create short-form marketing videos.
+
+Guidelines:
+- Be conversational and warm like ChatGPT
+- Keep responses short (1-3 sentences)
+- For greetings: respond naturally, mention you create UGC videos
+- For "what can you do": explain you create short marketing videos from product URLs
+- For product/URL messages: be enthusiastic, say you're creating their video
+
+Never use bullet points. Be natural and brief.`;
 
 export async function POST(request: Request) {
-  const { messages, context }: ChatRequest = await request.json();
-
-  const lastUserMessage = messages.filter((m) => m.role === 'user').pop();
-
-  let intentData: { intent: Intent; url: string | null } | null = null;
-  if (lastUserMessage) {
-    try {
-      intentData = await detectIntent(lastUserMessage.content, INTENT_DETECTION_PROMPT) as { intent: Intent; url: string | null };
-    } catch {
-      console.error('Intent detection failed');
-    }
-  }
-
-  const systemPrompt = CHAT_SYSTEM_PROMPT
-    .replace('{phase}', context.phase)
-    .replace(
-      '{productInfo}',
-      context.productData ? JSON.stringify(context.productData) : 'None yet'
-    )
-    .replace(
-      '{assets}',
-      Object.keys(context.assets).length > 0
-        ? JSON.stringify(context.assets)
-        : 'None selected'
-    );
-
+  const { message, history = [] } = await request.json();
   const encoder = new TextEncoder();
 
-  try {
-    const aiStream = await streamChat(
-      messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-      systemPrompt
-    );
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (type: string, data: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type, ...data })}\n\n`));
+      };
 
-    const reader = aiStream.getReader();
+      try {
+        const parsed = await parseMessage(message);
 
-    const readable = new ReadableStream({
-      async start(controller) {
-        if (intentData) {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: 'intent', data: intentData })}\n\n`)
+        if (!parsed.isVideoRequest) {
+          const aiStream = await streamChat(
+            [...history.slice(-6), { role: 'user' as const, content: message }],
+            SYSTEM_PROMPT
           );
-        }
-
-        try {
+          const reader = aiStream.getReader();
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-
-            const text = new TextDecoder().decode(value);
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ type: 'content', data: text })}\n\n`)
-            );
+            send('text', { content: new TextDecoder().decode(value) });
           }
-        } catch (error) {
-          console.error('Stream error:', error);
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+          return;
         }
 
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-        controller.close();
-      },
-    });
+        if (parsed.needsMoreInfo) {
+          send('text', { content: parsed.followUpQuestion || "What product should I create a video for? Share a URL or describe it." });
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+          return;
+        }
 
-    return new Response(readable, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      },
-    });
-  } catch (error) {
-    console.error('Chat error:', error);
-    return Response.json({ error: 'Chat failed' }, { status: 500 });
-  }
+        const productName = parsed.productName || 'your product';
+        send('text', { content: `Got it! I'm creating a UGC video for ${productName}. This will take about 30 seconds...\n\n` });
+
+        const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+
+        const { composition, summary, plan } = await runPipeline(parsed, (status) => {
+          send('status', { stage: status });
+        });
+
+        send('status', { stage: 'Rendering video...' });
+
+        const outputUrl = await renderVideo(composition, jobId, (progress) => {
+          send('progress', { percent: progress });
+        });
+
+        send('text', { content: `\n\nHere's your video! I went with a "${plan.visualStyle}" style, using the hook "${plan.hookText}" to grab attention. The ${composition.assets.musicName} track adds the perfect vibe.` });
+        send('video', { url: outputUrl });
+
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      } catch (error) {
+        console.error('Pipeline error:', error);
+        send('text', { content: 'Sorry, something went wrong creating your video. Please try again!' });
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      }
+
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
 }
