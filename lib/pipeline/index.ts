@@ -40,7 +40,7 @@ const SUMMARIZE_PROMPT = `You're a TikTok creative strategist. Analyze this prod
 
 Pick vibe for best TikTok energy. For gifSearchTerms, use FUNNY/MEME reaction GIF searches like "mind blown", "shocked face", "excited reaction", "slay", "its giving", "no way", "mic drop" - the kind that go viral on TikTok.`;
 
-const PLAN_PROMPT = `You are a viral meme copywriter. Create ONE meme video concept.
+const PLAN_PROMPT = `You are a viral meme copywriter. Create ONE meme video concept for the given product.
 
 Return JSON:
 {
@@ -48,48 +48,40 @@ Return JSON:
   "hookText": "Viral meme caption - funny, relatable, self-deprecating",
   "subText": null,
   "ctaText": "Brand/app name only",
-  "backgroundQuery": "SPECIFIC stock video query matching the meme context",
-  "gifQuery": "SPECIFIC reaction GIF that matches the meme emotion",
+  "backgroundQuery": "aesthetic stock video (NO PEOPLE)",
+  "gifQuery": "reaction GIF emotion search",
   "audioMood": "playful" | "hype" | "dramatic" | "chaotic",
   "sfxCue": null,
   "visualStyle": "meme"
 }
 
-IMPORTANT - MATCHING ASSETS:
-The backgroundQuery and gifQuery MUST match the hookText emotion/context!
+THE MEME IS THE SPEAKER:
+The reaction GIF "says" the caption. Background is just atmosphere.
 
-Examples of GOOD matching:
-- hookText: "me logging 'one bite' of cake" → backgroundQuery: "eating cake dessert" → gifQuery: "guilty eating"
-- hookText: "POV: the app judging my choices" → backgroundQuery: "person on phone couch" → gifQuery: "judging you"
-- hookText: "my last brain cell tracking macros" → backgroundQuery: "confused thinking" → gifQuery: "confused math"
+BACKGROUND (NO PEOPLE!):
+- Abstract, atmospheric, aesthetic only
+- Match the VIBE not literal scenario
+- Examples: "neon lights", "coffee steam", "city bokeh", "sunset clouds", "water ripples", "keyboard typing closeup", "plants aesthetic"
 
-Examples of BAD matching (don't do this):
-- hookText about food → backgroundQuery: "abstract gradient" (too generic!)
-- hookText about being tired → gifQuery: "happy dance" (wrong emotion!)
+GIF QUERY:
+- Search for the EMOTION the caption expresses
+- Examples: "confused", "shocked", "guilty", "side eye", "mind blown", "excited", "nervous", "disappointed", "smug", "crying laughing"
 
-BACKGROUND VIDEO QUERY RULES:
-- Be SPECIFIC to the scenario (not "aesthetic lifestyle")
-- Match the activity/setting in the meme
-- Good: "person eating snacks couch", "looking at phone confused", "workout gym tired"
-- Bad: "aesthetic", "lifestyle", "modern", "abstract"
-
-GIF QUERY RULES:
-- Match the EMOTION of the meme caption
-- Use reaction-style searches: "confused", "shocked", "guilty", "side eye", "stressed", "mind blown"
-- Be specific: "eating guilty", "math confused lady", "this is fine fire"
-
-MEME CAPTION RULES:
-- Self-deprecating humor > bragging
-- Relatable struggles of target audience
-- Reference product benefit through HUMOR
-
-VIRAL FORMATS:
+CAPTION FORMATS:
 - "me pretending to [thing] while [truth]"
-- "POV: [absurd scenario]"
-- "the app watching me [behavior]"
+- "POV: [absurd but relatable scenario]"
+- "the [product] watching me [funny behavior]"
 - "my last brain cell trying to [task]"
+- "nobody: / me: [behavior]"
+- "[thing] exists / me:"
 
-Make the caption ACTUALLY FUNNY and ensure assets MATCH the vibe.`;
+RULES:
+- Self-deprecating > bragging
+- Reference product benefit through HUMOR
+- Make it relatable to the target audience
+- Actually funny internet humor
+
+Analyze the product and create a meme that fits IT specifically.`;
 
 export async function parseMessage(message: string): Promise<ProductRequest> {
   const result = await chat({
