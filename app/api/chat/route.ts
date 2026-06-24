@@ -1,6 +1,5 @@
 import { chat, streamChat } from '@/lib/ai';
 import { parseMessage, runPipeline } from '@/lib/pipeline';
-import { renderVideo } from '@/lib/video/render';
 
 const SYSTEM_PROMPT = `You are a friendly UGC video assistant. You create short-form marketing videos.
 
@@ -50,27 +49,31 @@ export async function POST(request: Request) {
         }
 
         const productName = parsed.productName || 'your product';
-        send('text', { content: `Got it! I'm creating a UGC video for ${productName}. This will take about 30 seconds...\n\n` });
-
-        const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        send('text', { content: `Nice! I'm creating a UGC video for ${productName}. Give me a moment...\n\n` });
 
         const { composition, summary, plan } = await runPipeline(parsed, (status) => {
           send('status', { stage: status });
         });
 
-        send('status', { stage: 'Rendering video...' });
+        send('text', { content: `I went with the "${plan.visualStyle}" style using the hook: "${plan.hookText}"\n\nRendering your video now...` });
 
-        const outputUrl = await renderVideo(composition, jobId, (progress) => {
-          send('progress', { percent: progress });
+        send('render', {
+          composition,
+          summary: {
+            oneLiner: summary.oneLiner,
+            vibe: summary.vibe,
+          },
+          plan: {
+            hookText: plan.hookText,
+            visualStyle: plan.visualStyle,
+            audioMood: plan.audioMood,
+          },
         });
-
-        send('text', { content: `\n\nHere's your video! I went with a "${plan.visualStyle}" style, using the hook "${plan.hookText}" to grab attention. The ${composition.assets.musicName} track adds the perfect vibe.` });
-        send('video', { url: outputUrl });
 
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
       } catch (error) {
         console.error('Pipeline error:', error);
-        send('text', { content: 'Sorry, something went wrong creating your video. Please try again!' });
+        send('text', { content: 'Sorry, something went wrong. Please try again!' });
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
       }
 

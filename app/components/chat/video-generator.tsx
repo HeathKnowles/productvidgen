@@ -55,24 +55,35 @@ export function VideoGenerator({ productData, assets, onComplete }: VideoGenerat
         throw new Error('No background video selected');
       }
 
-      const videoBlob = await generateVideo({
-        backgroundVideo: assets.backgroundVideo,
-        gif: assets.gif,
-        audio: assets.audio,
-        script: generatedScript,
-        onProgress: (stage, p) => {
-          if (stage === 'Loading FFmpeg') {
+      const composition = {
+        durationSec: Math.min(assets.backgroundVideo.duration, 15),
+        hookText: generatedScript.hook,
+        subText: generatedScript.body,
+        ctaText: generatedScript.cta,
+        assets: {
+          backgroundVideoUrl: assets.backgroundVideo.url,
+          gifUrl: assets.gif?.url || '',
+          musicUrl: assets.audio?.url || '',
+          musicName: assets.audio?.name || '',
+        },
+        visualStyle: 'clean-ugc' as const,
+      };
+
+      const videoBlob = await generateVideo(
+        composition,
+        (stage: string, p: number) => {
+          if (stage.includes('Loading')) {
             setStageIndex(2);
             setProgress(20 + Math.round(p * 0.1));
-          } else if (stage === 'Downloading assets') {
+          } else if (stage.includes('Downloading')) {
             setStageIndex(3);
             setProgress(30 + Math.round(p * 0.2));
-          } else if (stage === 'Processing video') {
+          } else if (stage.includes('Composing') || stage.includes('Finalizing')) {
             setStageIndex(p < 50 ? 4 : 5);
             setProgress(50 + Math.round(p * 0.4));
           }
         },
-      });
+      );
 
       setStageIndex(6);
       setProgress(95);
@@ -126,7 +137,7 @@ export function VideoGenerator({ productData, assets, onComplete }: VideoGenerat
   }
 
   return (
-    <div className="bg-gradient-to-b from-blue-50 to-white dark:from-blue-950 dark:to-zinc-900 rounded-xl p-8 border border-blue-100 dark:border-blue-900">
+    <div className="bg-linear-to-b from-blue-50 to-white dark:from-blue-950 dark:to-zinc-900 rounded-xl p-8 border border-blue-100 dark:border-blue-900">
       <div className="text-center space-y-6">
         <div className="relative w-20 h-20 mx-auto">
           <div className="absolute inset-0 rounded-full border-4 border-blue-200 dark:border-blue-800" />
@@ -157,7 +168,7 @@ export function VideoGenerator({ productData, assets, onComplete }: VideoGenerat
           </div>
           <div className="w-full bg-zinc-200 dark:bg-zinc-800 rounded-full h-2.5 overflow-hidden">
             <div
-              className="bg-gradient-to-r from-blue-500 to-blue-600 h-full rounded-full transition-all duration-500 ease-out"
+              className="bg-linear-to-r from-blue-500 to-blue-600 h-full rounded-full transition-all duration-500 ease-out"
               style={{ width: `${progress}%` }}
             />
           </div>

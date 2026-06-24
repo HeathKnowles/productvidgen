@@ -1,7 +1,5 @@
-'use client';
-
 import { Composition } from 'remotion';
-import { UgcVideo, type UgcVideoProps } from './UgcVideo';
+import { UgcVideo } from './UgcVideo';
 import type { VideoComposition } from '@/lib/types/video';
 
 const defaultComposition: VideoComposition = {
@@ -30,7 +28,7 @@ export const RemotionRoot: React.FC = () => {
       height={1920}
       defaultProps={{
         composition: defaultComposition,
-      } satisfies UgcVideoProps}
+      }}
     />
   );
 };
