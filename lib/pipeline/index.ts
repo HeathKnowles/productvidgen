@@ -1,7 +1,8 @@
 import { chat } from '@/lib/ai';
 import { scrapeWebsite } from '@/lib/scraper';
 import { searchVideos } from '@/lib/assets/pexels';
-import { getViralMeme, getReactionMemes } from '@/lib/assets/memes';
+import { searchGifs } from '@/lib/assets/giphy';
+import { getViralMeme } from '@/lib/assets/memes';
 import { resolveAudio } from '@/lib/audio/resolve';
 import type {
   ProductRequest,
@@ -47,36 +48,48 @@ Return JSON:
   "hookText": "Viral meme caption - funny, relatable, self-deprecating",
   "subText": null,
   "ctaText": "Brand/app name only",
-  "backgroundQuery": "aesthetic stock video for background",
-  "gifQuery": "reaction meme gif search term",
+  "backgroundQuery": "SPECIFIC stock video query matching the meme context",
+  "gifQuery": "SPECIFIC reaction GIF that matches the meme emotion",
   "audioMood": "playful" | "hype" | "dramatic" | "chaotic",
   "sfxCue": null,
   "visualStyle": "meme"
 }
 
+IMPORTANT - MATCHING ASSETS:
+The backgroundQuery and gifQuery MUST match the hookText emotion/context!
+
+Examples of GOOD matching:
+- hookText: "me logging 'one bite' of cake" → backgroundQuery: "eating cake dessert" → gifQuery: "guilty eating"
+- hookText: "POV: the app judging my choices" → backgroundQuery: "person on phone couch" → gifQuery: "judging you"
+- hookText: "my last brain cell tracking macros" → backgroundQuery: "confused thinking" → gifQuery: "confused math"
+
+Examples of BAD matching (don't do this):
+- hookText about food → backgroundQuery: "abstract gradient" (too generic!)
+- hookText about being tired → gifQuery: "happy dance" (wrong emotion!)
+
+BACKGROUND VIDEO QUERY RULES:
+- Be SPECIFIC to the scenario (not "aesthetic lifestyle")
+- Match the activity/setting in the meme
+- Good: "person eating snacks couch", "looking at phone confused", "workout gym tired"
+- Bad: "aesthetic", "lifestyle", "modern", "abstract"
+
+GIF QUERY RULES:
+- Match the EMOTION of the meme caption
+- Use reaction-style searches: "confused", "shocked", "guilty", "side eye", "stressed", "mind blown"
+- Be specific: "eating guilty", "math confused lady", "this is fine fire"
+
 MEME CAPTION RULES:
-- Use relatable day-to-day struggles of the target audience
 - Self-deprecating humor > bragging
-- Absurdist or exaggerated scenarios work great
-- Reference the product benefit through HUMOR not features
+- Relatable struggles of target audience
+- Reference product benefit through HUMOR
 
-VIRAL CAPTION FORMATS:
-- "me pretending to [do thing] while [funny truth]"
-- "POV: [absurd but relatable scenario]"
-- "the [product] watching me [funny user behavior]"
-- "my last brain cell trying to [task product helps with]"
-- "[thing] exists / me: [funny reaction]"
-- "how it started vs how it's going"
-- "nobody: / me at 2am: [funny behavior]"
+VIRAL FORMATS:
+- "me pretending to [thing] while [truth]"
+- "POV: [absurd scenario]"
+- "the app watching me [behavior]"
+- "my last brain cell trying to [task]"
 
-EXAMPLES for a calorie tracking app:
-- "me logging 'one bite' of cake as 50 calories"
-- "the app watching me eat my feelings"
-- "POV: you find out grapes have calories"
-- "my fitness journey: day 1 vs day 1 again"
-- "me vs the recommended serving size"
-
-Make it ACTUALLY FUNNY. Internet humor. Meme energy.`;
+Make the caption ACTUALLY FUNNY and ensure assets MATCH the vibe.`;
 
 export async function parseMessage(message: string): Promise<ProductRequest> {
   const result = await chat({
@@ -133,9 +146,10 @@ export async function resolveAssets(
   plan: VideoPlan,
   productContext: string
 ): Promise<ResolvedAssets> {
-  const [videos, memes, viralMeme, audio] = await Promise.all([
+  // Search for contextual GIFs using the AI-generated query
+  const [videos, gifs, fallbackMeme, audio] = await Promise.all([
     searchVideos(plan.backgroundQuery, { limit: 5, orientation: 'portrait' }),
-    getReactionMemes(10).catch(() => []),
+    searchGifs(plan.gifQuery, { limit: 10 }).catch(() => []),
     getViralMeme().catch(() => null),
     resolveAudio(
       { mood: plan.audioMood, sfxCue: plan.sfxCue },
@@ -146,16 +160,24 @@ export async function resolveAssets(
   const video = videos[0];
   if (!video) throw new Error('No background video found for: ' + plan.backgroundQuery);
 
-  // Use reaction memes from Reddit, fall back to viral meme
-  const meme = memes.length > 0
-    ? memes[Math.floor(Math.random() * Math.min(5, memes.length))]
-    : viralMeme;
+  // Use contextual GIF from search, fall back to viral meme
+  const gif = gifs.length > 0
+    ? gifs[Math.floor(Math.random() * Math.min(5, gifs.length))]
+    : fallbackMeme;
 
-  if (!meme) throw new Error('No meme/GIF found');
+  if (!gif) throw new Error('No GIF found for: ' + plan.gifQuery);
+
+  console.log('Asset matching:', {
+    hookText: plan.hookText,
+    backgroundQuery: plan.backgroundQuery,
+    gifQuery: plan.gifQuery,
+    foundVideo: video.url,
+    foundGif: gif.url,
+  });
 
   return {
     backgroundVideoUrl: video.url,
-    gifUrl: meme.url,
+    gifUrl: gif.url,
     musicUrl: audio.musicUrl,
     musicName: audio.musicName,
     sfxUrl: audio.sfxUrl,

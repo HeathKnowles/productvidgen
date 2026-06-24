@@ -14,28 +14,55 @@ export async function generateVideo(
   const durationSec = composition.durationSec;
 
   onProgress?.('Loading assets...', 10);
+  console.log('Loading video:', composition.assets.backgroundVideoUrl);
+  console.log('Loading GIF:', composition.assets.gifUrl);
 
-  // Load background video
+  // Load background video with timeout
   const bgVideo = document.createElement('video');
   bgVideo.crossOrigin = 'anonymous';
-  bgVideo.src = composition.assets.backgroundVideoUrl;
   bgVideo.muted = true;
   bgVideo.loop = true;
+  bgVideo.playsInline = true;
 
   await new Promise<void>((resolve, reject) => {
-    bgVideo.onloadeddata = () => resolve();
-    bgVideo.onerror = () => reject(new Error('Failed to load background video'));
+    const timeout = setTimeout(() => {
+      reject(new Error('Video load timeout - may be CORS blocked'));
+    }, 15000);
+
+    bgVideo.onloadeddata = () => {
+      clearTimeout(timeout);
+      console.log('Video loaded successfully');
+      resolve();
+    };
+    bgVideo.onerror = (e) => {
+      clearTimeout(timeout);
+      console.error('Video load error:', e);
+      reject(new Error('Failed to load background video - CORS or network error'));
+    };
+    bgVideo.src = composition.assets.backgroundVideoUrl;
     bgVideo.load();
   });
 
-  // Load meme/GIF image
+  // Load meme/GIF image with timeout
   let memeImg: HTMLImageElement | null = null;
   if (composition.assets.gifUrl) {
     memeImg = new Image();
     memeImg.crossOrigin = 'anonymous';
     await new Promise<void>((resolve, reject) => {
-      memeImg!.onload = () => resolve();
-      memeImg!.onerror = () => reject(new Error('Failed to load meme'));
+      const timeout = setTimeout(() => {
+        reject(new Error('GIF load timeout - may be CORS blocked'));
+      }, 10000);
+
+      memeImg!.onload = () => {
+        clearTimeout(timeout);
+        console.log('GIF loaded successfully');
+        resolve();
+      };
+      memeImg!.onerror = (e) => {
+        clearTimeout(timeout);
+        console.error('GIF load error:', e);
+        reject(new Error('Failed to load meme - CORS or network error'));
+      };
       memeImg!.src = composition.assets.gifUrl;
     });
   }

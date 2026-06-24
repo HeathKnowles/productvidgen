@@ -47,7 +47,7 @@ The output mimics the low-effort, high-engagement meme format that performs well
 │                    │         Resolve Assets              │  │
 │                    │                                     │  │
 │                    │  Background: Pexels API             │  │
-│                    │  Meme/GIF:   Reddit Meme API        │  │
+│                    │  Meme/GIF:   GIPHY        │  │
 │                    │  Audio:      TikTok + Freesound     │  │
 │                    └─────────────────────────────────────┘  │
 └─────────────────────┬───────────────────────────────────────┘
@@ -79,10 +79,6 @@ Tradeoff: No hardware acceleration, limited to real-time rendering.
 ### Why Groq over OpenAI?
 
 Speed. Groq returns responses in ~500ms vs 2-3s for GPT-4. For a chat UX where users expect quick feedback, this matters. Falls back to OpenRouter if Groq fails.
-
-### Why Reddit Meme API over Giphy/Tenor?
-
-Giphy returns generic reaction GIFs. Reddit's r/reactiongifs and r/memes have community-curated, actually-funny content. The Meme API is free, no auth required, and pulls from subreddits where humor is the selection criteria.
 
 ## Tech Stack
 
