@@ -1,4 +1,4 @@
-import { openai } from '@/lib/openai';
+import { streamChat, detectIntent } from '@/lib/ai';
 import { CHAT_SYSTEM_PROMPT, INTENT_DETECTION_PROMPT } from '@/lib/prompts/intent';
 import type { ProductData, AssetSelection, ChatPhase, Intent } from '@/lib/types';
 
@@ -19,15 +19,7 @@ export async function POST(request: Request) {
   let intentData: { intent: Intent; url: string | null } | null = null;
   if (lastUserMessage) {
     try {
-      const intentResponse = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: INTENT_DETECTION_PROMPT },
-          { role: 'user', content: lastUserMessage.content },
-        ],
-        response_format: { type: 'json_object' },
-      });
-      intentData = JSON.parse(intentResponse.choices[0]?.message?.content || '{}');
+      intentData = await detectIntent(lastUserMessage.content, INTENT_DETECTION_PROMPT) as { intent: Intent; url: string | null };
     } catch {
       console.error('Intent detection failed');
     }
@@ -46,44 +38,52 @@ export async function POST(request: Request) {
         : 'None selected'
     );
 
-  const stream = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    ],
-    stream: true,
-  });
-
   const encoder = new TextEncoder();
 
-  const readable = new ReadableStream({
-    async start(controller) {
-      if (intentData) {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ type: 'intent', data: intentData })}\n\n`)
-        );
-      }
+  try {
+    const aiStream = await streamChat(
+      messages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      systemPrompt
+    );
 
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content;
-        if (content) {
+    const reader = aiStream.getReader();
+
+    const readable = new ReadableStream({
+      async start(controller) {
+        if (intentData) {
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: 'content', data: content })}\n\n`)
+            encoder.encode(`data: ${JSON.stringify({ type: 'intent', data: intentData })}\n\n`)
           );
         }
-      }
 
-      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-      controller.close();
-    },
-  });
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-  return new Response(readable, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    },
-  });
+            const text = new TextDecoder().decode(value);
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: 'content', data: text })}\n\n`)
+            );
+          }
+        } catch (error) {
+          console.error('Stream error:', error);
+        }
+
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    return new Response(readable, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+    });
+  } catch (error) {
+    console.error('Chat error:', error);
+    return Response.json({ error: 'Chat failed' }, { status: 500 });
+  }
 }

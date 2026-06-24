@@ -1,4 +1,4 @@
-import { openai } from '@/lib/openai';
+import { generateJson } from '@/lib/ai';
 import { SCRIPT_GENERATION_PROMPT } from '@/lib/prompts/script';
 import type { ProductData, AssetSelection, VideoScript } from '@/lib/types';
 
@@ -25,17 +25,9 @@ export async function POST(request: Request) {
       .replace('{targetAudience}', productData.targetAudience)
       .replace('{tone}', productData.tone);
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [
-        { role: 'system', content: prompt },
-        { role: 'user', content: 'Generate the video script now.' },
-      ],
-      response_format: { type: 'json_object' },
-    });
-
-    const script: VideoScript = JSON.parse(
-      response.choices[0]?.message?.content || '{}'
+    const script = await generateJson<VideoScript>(
+      prompt,
+      'Generate the video script now.'
     );
 
     const jobId = `job_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;

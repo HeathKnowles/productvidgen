@@ -1,5 +1,5 @@
 import { scrapeWebsite, isValidUrl } from '@/lib/scraper';
-import { openai } from '@/lib/openai';
+import { generateJson } from '@/lib/ai';
 import { PRODUCT_EXTRACTION_PROMPT, WEBSITE_SUMMARY_PROMPT } from '@/lib/prompts/extraction';
 import type { ProductData } from '@/lib/types';
 
@@ -13,34 +13,29 @@ export async function POST(request: Request) {
   try {
     const scrapedContent = await scrapeWebsite(url);
 
-    const summaryResponse = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: WEBSITE_SUMMARY_PROMPT },
-        {
-          role: 'user',
-          content: `URL: ${url}\n\nTitle: ${scrapedContent.title}\n\nDescription: ${scrapedContent.description}\n\nHeadings: ${scrapedContent.headings.join(', ')}\n\nContent: ${scrapedContent.paragraphs.join('\n\n')}`,
-        },
-      ],
-      response_format: { type: 'json_object' },
-    });
+    const summary = await generateJson<{
+      productName: string;
+      mainOffering: string;
+      valueProps: string[];
+      targetCustomer: string;
+      brandVoice: string;
+      suggestedVideoAngle: string;
+    }>(
+      WEBSITE_SUMMARY_PROMPT,
+      `URL: ${url}\n\nTitle: ${scrapedContent.title}\n\nDescription: ${scrapedContent.description}\n\nHeadings: ${scrapedContent.headings.join(', ')}\n\nContent: ${scrapedContent.paragraphs.join('\n\n')}`
+    );
 
-    const summary = JSON.parse(summaryResponse.choices[0]?.message?.content || '{}');
-
-    const extractionResponse = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: PRODUCT_EXTRACTION_PROMPT },
-        {
-          role: 'user',
-          content: JSON.stringify(summary),
-        },
-      ],
-      response_format: { type: 'json_object' },
-    });
+    const extractedData = await generateJson<{
+      name: string;
+      description: string;
+      features: string[];
+      targetAudience: string;
+      tone: 'professional' | 'casual' | 'energetic' | 'minimal';
+      confidence: number;
+    }>(PRODUCT_EXTRACTION_PROMPT, JSON.stringify(summary));
 
     const productData: ProductData = {
-      ...JSON.parse(extractionResponse.choices[0]?.message?.content || '{}'),
+      ...extractedData,
       websiteUrl: url,
       imageUrls: scrapedContent.images,
     };
