@@ -1,9 +1,11 @@
 'use client';
 
-import { useReducer, useCallback } from 'react';
-import type { Message, ChatState, ChatAction, ProductData, Intent } from '@/lib/types';
+import { useReducer, useCallback, useState } from 'react';
+import type { Message, ChatState, ChatAction, ProductData, Intent, AssetSelection } from '@/lib/types';
 import { MessageList } from './message-list';
 import { MessageInput } from './message-input';
+import { AssetSelector } from './asset-selector';
+import { VideoGenerator } from './video-generator';
 
 const initialState: ChatState = {
   messages: [],
@@ -51,6 +53,9 @@ function generateId() {
 
 export function ChatContainer() {
   const [state, dispatch] = useReducer(chatReducer, initialState);
+  const [showAssetSelector, setShowAssetSelector] = useState(false);
+  const [showVideoGenerator, setShowVideoGenerator] = useState(false);
+  const [searchTerms, setSearchTerms] = useState({ video: ['lifestyle product'], gif: ['excited'] });
 
   const handleSend = useCallback(
     async (content: string) => {
@@ -124,6 +129,11 @@ export function ChatContainer() {
 
                   if (intent === 'provide_url' && url) {
                     handleUrlProvided(url);
+                  } else if (intent === 'select_assets' && state.productData) {
+                    setShowAssetSelector(true);
+                  } else if (intent === 'generate_video' && state.productData && state.assets.backgroundVideo) {
+                    setShowVideoGenerator(true);
+                    dispatch({ type: 'SET_PHASE', phase: 'generating' });
                   }
                 } else if (parsed.type === 'content') {
                   dispatch({ type: 'UPDATE_MESSAGE', id: assistantId, content: parsed.data });
@@ -161,11 +171,54 @@ export function ChatContainer() {
         if (productData) {
           dispatch({ type: 'SET_PRODUCT_DATA', data: productData as ProductData });
           dispatch({ type: 'SET_PHASE', phase: 'assets' });
+
+          setTimeout(() => {
+            setShowAssetSelector(true);
+          }, 1500);
         }
       }
     } catch (error) {
       console.error('Scrape error:', error);
     }
+  };
+
+  const handleAssetsSelected = (assets: AssetSelection) => {
+    if (assets.backgroundVideo) {
+      dispatch({ type: 'SET_ASSET', key: 'backgroundVideo', asset: assets.backgroundVideo });
+    }
+    if (assets.gif) {
+      dispatch({ type: 'SET_ASSET', key: 'gif', asset: assets.gif });
+    }
+    if (assets.audio) {
+      dispatch({ type: 'SET_ASSET', key: 'audio', asset: assets.audio });
+    }
+
+    setShowAssetSelector(false);
+    setShowVideoGenerator(true);
+    dispatch({ type: 'SET_PHASE', phase: 'generating' });
+
+    dispatch({
+      type: 'ADD_MESSAGE',
+      message: {
+        id: generateId(),
+        role: 'assistant',
+        content: 'Great choices! Starting video generation now...',
+        timestamp: Date.now(),
+      },
+    });
+  };
+
+  const handleVideoComplete = (videoUrl: string) => {
+    dispatch({ type: 'SET_PHASE', phase: 'complete' });
+    dispatch({
+      type: 'ADD_MESSAGE',
+      message: {
+        id: generateId(),
+        role: 'assistant',
+        content: 'Your video is ready! You can preview and download it above.',
+        timestamp: Date.now(),
+      },
+    });
   };
 
   return (
@@ -176,8 +229,8 @@ export function ChatContainer() {
             UGC Video Generator
           </h1>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              Phase: {state.currentPhase}
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 capitalize">
+              {state.currentPhase}
             </span>
             {state.productData && (
               <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-0.5 rounded-full">
@@ -188,9 +241,42 @@ export function ChatContainer() {
         </div>
       </header>
 
-      <MessageList messages={state.messages} isLoading={state.isLoading} />
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto">
+          <MessageList messages={state.messages} isLoading={state.isLoading} />
 
-      <MessageInput onSend={handleSend} disabled={state.isLoading} />
+          {showAssetSelector && state.productData && (
+            <div className="p-4">
+              <AssetSelector
+                searchTerms={searchTerms}
+                onComplete={handleAssetsSelected}
+              />
+            </div>
+          )}
+
+          {showVideoGenerator && state.productData && state.assets.backgroundVideo && (
+            <div className="p-4">
+              <VideoGenerator
+                productData={state.productData}
+                assets={state.assets}
+                onComplete={handleVideoComplete}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      <MessageInput
+        onSend={handleSend}
+        disabled={state.isLoading || showAssetSelector || showVideoGenerator}
+        placeholder={
+          state.currentPhase === 'gathering'
+            ? 'Describe your product or paste a URL...'
+            : state.currentPhase === 'assets'
+            ? 'Select assets above or describe what you want...'
+            : 'Your video is being generated...'
+        }
+      />
     </div>
   );
 }
